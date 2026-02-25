@@ -82,7 +82,9 @@ func downloadRulesets(vm *goja.Runtime) (resultLines []*Ruleset, err error) {
 }
 
 // ExecJs 执行 JS 脚本，支持 rulesets 和 buildConfig 函数
-func ExecJs(script string, template string, proxies SubscriptionData) (result string, err error) {
+func ExecJs(
+	script string, template string, proxies SubscriptionData, legacyRelay bool,
+) (result string, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("[panic] %v\n%s", r, string(debug.Stack()))
@@ -112,7 +114,7 @@ func ExecJs(script string, template string, proxies SubscriptionData) (result st
 		return
 	}
 
-	buildConfigFunc := func(map[string]any) {}
+	buildConfigFunc := func(map[string]any, bool) {}
 	jsBuildConfigFunc := vm.Get("buildConfig")
 	if jsBuildConfigFunc != nil {
 		err = vm.ExportTo(jsBuildConfigFunc, &buildConfigFunc)
@@ -121,7 +123,7 @@ func ExecJs(script string, template string, proxies SubscriptionData) (result st
 		}
 	}
 
-	buildConfigFunc(conf)
+	buildConfigFunc(conf, legacyRelay)
 
 	result, err = Marshal(conf)
 

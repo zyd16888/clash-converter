@@ -7,6 +7,6 @@
 ## 详情说明
 
 1. 此页面应直接挂在到gin下，不要单独部署。endpoint为/ui。
-2. 需要可配置：baseUrl，sub（列表，要求可增删、排序），script，template，token。
+2. 需要可配置：baseUrl，sub（列表，要求可增删、排序），script，template，token，legacyRelay。
 3. 根据配置生成一段调用/sub的订阅链接。也就是说页面为纯前端交互，不需要实际调用接口。
 4. 所有参数均可以通过query param传入并预填写。

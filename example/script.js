@@ -91,7 +91,7 @@ function rulesets(r) {
 }
 
 // impl
-function buildConfig(config) {
+function buildConfig(config, legacyRelay) {
     config['dns']['nameserver-policy'] = {
         ...config['dns']['nameserver-policy'],
         ...NS_POLICY

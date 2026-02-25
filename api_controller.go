@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -42,12 +43,26 @@ func handleSubscription(c *gin.Context) {
 	scriptUrl := c.Query("script")
 	templateUrl := c.Query("template")
 	userToken := c.Query("token")
+	legacyRelayRaw := c.Query("legacyRelay")
+	if legacyRelayRaw == "" {
+		legacyRelayRaw = c.Query("legacy_relay")
+	}
+	legacyRelay := false
 
 	// 鉴权
 	if userToken != Token {
 		L().Warn("Unauthorized request received")
 		c.String(http.StatusUnauthorized, "Unauthorized request")
 		return
+	}
+
+	if legacyRelayRaw != "" {
+		parsedLegacyRelay, err := strconv.ParseBool(legacyRelayRaw)
+		if err != nil {
+			c.String(http.StatusBadRequest, "legacyRelay must be a boolean")
+			return
+		}
+		legacyRelay = parsedLegacyRelay
 	}
 
 	// 参数校验
@@ -88,7 +103,7 @@ func handleSubscription(c *gin.Context) {
 	}
 
 	// 执行 JS 脚本生成配置
-	result, err := ExecJs(script, template, mergedProxies)
+	result, err := ExecJs(script, template, mergedProxies, legacyRelay)
 	if err != nil {
 		L().Error(err.Error())
 		c.String(http.StatusInternalServerError, err.Error())

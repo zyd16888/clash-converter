@@ -107,12 +107,13 @@ export ACCESS_TOKEN=your-secret-token
 
 **请求参数：**
 
-| 参数       | 类型       | 必填 | 说明          |
-|----------|----------|----|-------------|
-| sub      | string[] | 是  | 订阅链接，可传入多个  |
-| script   | string   | 是  | JS 脚本 URL   |
-| template | string   | 是  | 模板 YAML URL |
-| token    | string   | 是  | 访问令牌        |
+| 参数       | 类型       | 必填 | 说明                                                                   |
+|----------|----------|----|----------------------------------------------------------------------|
+| sub      | string[] | 是  | 订阅链接，可传入多个                                                           |
+| script   | string   | 是  | JS 脚本 URL                                                            |
+| template | string   | 是  | 模板 YAML URL                                                          |
+| token    | string   | 是  | 访问令牌                                                                 |
+| legacyRelay | bool | 否 | 是否启用 legacy relay 兼容参数，支持 `true/false/1/0`，默认 `false`；此参数直接传递给 JS 脚本 |
 
 
 **响应：**
@@ -134,6 +135,7 @@ Web 界面，用于可视化生成订阅链接。
 **URL 参数预填：**
 
 所有配置项都可以通过 URL 参数传入并预填写（用于保存至书签或分享）。
+例如：`baseUrl`、`sub`、`script`、`template`、`token`、`legacyRelay`。
 
 ### GET /ping
 
@@ -150,6 +152,7 @@ Web 界面，用于可视化生成订阅链接。
     - **Script URL**：JS 脚本地址
     - **Template URL**：模板文件地址
     - **Access Token**：访问令牌
+    - **Legacy Relay**：是否附带 `legacyRelay=1` 参数
 3. 页面会生成两个链接：
     - **订阅链接**：用于 Clash 客户端订阅
     - **收藏链接**：包含当前配置的页面链接，可保存到书签
@@ -183,7 +186,7 @@ Template 是一个 YAML 格式的 Clash 配置文件，定义基础配置和策�
 **说明**：
 
 - `proxies` 和 `rules` 字段会被覆盖
-- JS 脚本的 `buildConfig()` 可以进一步修改模板生成的配置
+- JS 脚本的 `buildConfig(config, legacyRelay)` 可以进一步修改模板生成的配置
 
 ## JS 脚本
 
@@ -196,7 +199,7 @@ JS 脚本负责定义订阅转换的具体逻辑，包括规则集的下载和�
 2. 执行 JS 脚本，调用 `rulesets()` 函数获取规则集列表
 3. Go 并发下载所有规则集（支持缓存）
 4. Go 根据模板、节点和规则集构建基础配置
-5. 执行 JS 的 `buildConfig()` 函数（如果存在）进行最终调整
+5. 执行 JS 的 `buildConfig(config, legacyRelay)` 函数（如果存在）进行最终调整
 6. 返回最终配置
 
 ### 需要实现的函数
@@ -233,11 +236,13 @@ function rulesets(callback) {
 - 例如：`DOMAIN,google.com` → `DOMAIN,google.com,PROXY`
 - 支持的规则格式参考 Clash Meta 文档
 
-#### buildConfig(config)
+#### buildConfig(config, legacyRelay)
 
 用于在配置生成后进行最终调整。
 
-- **参数**：`config` (object) - 完整的 Clash 配置对象（可修改）
+- **参数**：
+  - `config` (object): 完整的 Clash 配置对象（可修改）
+  - `legacyRelay` (boolean): 来自 `/sub` 接口 `legacyRelay` 查询参数，未传时为 `false`
 - **返回值**：无（直接修改 `config` 对象）
 
 **config 结构示例：**
@@ -255,10 +260,14 @@ function rulesets(callback) {
 **示例：**
 
 ```javascript
-function buildConfig(config) {
+function buildConfig(config, legacyRelay) {
     // 修改端口
     config['mixed-port'] = 7890;
     config['allow-lan'] = true;
+
+    if (legacyRelay) {
+        log('启用 legacy relay 兼容模式');
+    }
 
     // 添加自定义 DNS 配置
     config['dns'] = {

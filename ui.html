@@ -204,6 +204,14 @@
                 <label for="token">Access Token</label>
                 <input type="text" id="token" placeholder="your-access-token">
             </div>
+
+            <div class="form-group">
+                <label for="legacyRelay">
+                    <input type="checkbox" id="legacyRelay">
+                    Legacy Relay
+                </label>
+                <div class="hint">勾选后会在订阅链接中添加 legacyRelay=1</div>
+            </div>
         </div>
 
         <div class="card">
@@ -254,6 +262,7 @@
             document.getElementById('script').addEventListener('input', handleChange);
             document.getElementById('template').addEventListener('input', handleChange);
             document.getElementById('token').addEventListener('input', handleChange);
+            document.getElementById('legacyRelay').addEventListener('change', handleChange);
         }
 
         // 从 localStorage 加载
@@ -267,6 +276,7 @@
                 if (config.script) document.getElementById('script').value = config.script;
                 if (config.template) document.getElementById('template').value = config.template;
                 if (config.token) document.getElementById('token').value = config.token;
+                if (config.legacyRelay) document.getElementById('legacyRelay').checked = true;
                 if (config.subs && config.subs.length > 0) {
                     config.subs.forEach(sub => addSub(sub));
                 }
@@ -290,6 +300,11 @@
             }
             if (params.has('token')) {
                 document.getElementById('token').value = params.get('token');
+            }
+            if (params.has('legacyRelay')) {
+                document.getElementById('legacyRelay').checked = parseBooleanParam(params.get('legacyRelay'));
+            } else if (params.has('legacy_relay')) {
+                document.getElementById('legacyRelay').checked = parseBooleanParam(params.get('legacy_relay'));
             }
 
             const subParams = params.getAll('sub');
@@ -369,12 +384,19 @@
             const script = document.getElementById('script').value.trim();
             const template = document.getElementById('template').value.trim();
             const token = document.getElementById('token').value.trim();
+            const legacyRelay = document.getElementById('legacyRelay').checked;
 
             const subs = Array.from(document.querySelectorAll('.sub-item input'))
                 .map(input => input.value.trim())
                 .filter(v => v);
 
-            return { baseUrl, script, template, token, subs };
+            return { baseUrl, script, template, token, legacyRelay, subs };
+        }
+
+        // 解析布尔参数，兼容 true/false/1/0
+        function parseBooleanParam(value) {
+            const normalized = String(value || '').trim().toLowerCase();
+            return normalized === '1' || normalized === 'true';
         }
 
         // 生成链接
@@ -398,6 +420,7 @@
             if (config.script) params.push('script=' + encodeURIComponent(config.script));
             if (config.template) params.push('template=' + encodeURIComponent(config.template));
             if (config.token) params.push('token=' + encodeURIComponent(config.token));
+            if (config.legacyRelay) params.push('legacyRelay=1');
 
             document.getElementById('resultUrl').textContent = `${baseUrl}/sub?${params.join('&')}`;
 
@@ -410,6 +433,7 @@
             if (config.script) bookmarkParams.push('script=' + encodeURIComponent(config.script));
             if (config.template) bookmarkParams.push('template=' + encodeURIComponent(config.template));
             if (config.token) bookmarkParams.push('token=' + encodeURIComponent(config.token));
+            if (config.legacyRelay) bookmarkParams.push('legacyRelay=1');
 
             document.getElementById('bookmarkUrl').textContent = `${window.location.origin}/ui?${bookmarkParams.join('&')}`;
         }
