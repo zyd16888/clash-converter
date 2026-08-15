@@ -55,9 +55,16 @@ func TestOutputFilenameAndSubInfoFormatting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var generatedConfig map[string]any
+	if err = yaml.Unmarshal([]byte(result), &generatedConfig); err != nil {
+		t.Fatal(err)
+	}
+	if !proxyGroupNames(t, generatedConfig["proxy-groups"])[SubInfoGroupName] {
+		t.Fatalf("missing subscription information group %q", SubInfoGroupName)
+	}
 	for _, fragment := range []string{"Airport", "已用 25.0 GB / 100.0 GB", "剩余 75.0 GB", "到期 2026-09-01"} {
 		if !strings.Contains(result, fragment) {
-			t.Errorf("Sub Info does not contain %q:\n%s", fragment, result)
+			t.Errorf("subscription information does not contain %q:\n%s", fragment, result)
 		}
 	}
 }

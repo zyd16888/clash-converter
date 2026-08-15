@@ -94,8 +94,14 @@ func TestExampleConfigHasSelfContainedGroupsWithoutRelay(t *testing.T) {
 
 	groups := proxyGroupNames(t, config["proxy-groups"])
 	required := []string{
-		"PROXY", "AUTO", "FALLBACK", "Ads", "Private", "CN", "OpenAI", "Telegram",
-		"Netflix", "Steam", "GitHub", "AWS", "PayPal", "Academic", "News", "Shopping", "Final",
+		"🚀 节点选择", "⚡ 自动选择", "🛟 故障转移", "🛑 广告拦截",
+		"🤖 AI 服务", "📹 YouTube", "🔍 Google 服务", "Ⓜ️ Microsoft 服务",
+		"🍏 Apple 服务", "📲 Telegram", "💬 社交媒体", "🎬 国际流媒体",
+		"🎮 游戏平台", "🛠️ 开发工具", "☁️ 云服务", "💳 金融支付",
+		"🏠 私有网络", "🇨🇳 国内直连", "🐟 漏网之鱼",
+	}
+	if len(groups) != len(required) {
+		t.Fatalf("unexpected proxy group count: got %d, want %d", len(groups), len(required))
 	}
 	for _, name := range required {
 		if !groups[name] {
@@ -107,13 +113,32 @@ func TestExampleConfigHasSelfContainedGroupsWithoutRelay(t *testing.T) {
 	if err = vm.ExportTo(vm.Get("RULESET_DEFINITIONS"), &definitions); err != nil {
 		t.Fatalf("cannot export ruleset definitions: %v", err)
 	}
-	for _, definition := range definitions {
+	targets := make(map[string]string, len(definitions))
+	indexes := make(map[string]int, len(definitions))
+	for definitionIndex, definition := range definitions {
 		if len(definition) != 3 {
 			t.Fatalf("invalid ruleset definition: %v", definition)
 		}
-		if definition[0] != "PROXY" && !groups[definition[0]] {
+		if !groups[definition[0]] {
 			t.Errorf("ruleset %q targets missing group %q", definition[2], definition[0])
 		}
+		if _, exists := indexes[definition[2]]; !exists {
+			targets[definition[2]] = definition[0]
+			indexes[definition[2]] = definitionIndex
+		}
+	}
+	for _, source := range []string{
+		"google-gemini", "google-deepmind", "github-copilot", "openai", "anthropic", "category-ai-chat-!cn",
+	} {
+		if targets[source] != "🤖 AI 服务" {
+			t.Errorf("AI ruleset %q targets %q", source, targets[source])
+		}
+	}
+	if indexes["google-gemini"] >= indexes["google"] || indexes["google-deepmind"] >= indexes["google"] {
+		t.Error("Google AI rulesets must precede the general Google ruleset")
+	}
+	if indexes["github-copilot"] >= indexes["github"] {
+		t.Error("GitHub Copilot ruleset must precede the general GitHub ruleset")
 	}
 }
 
@@ -175,14 +200,15 @@ func TestExampleConfigFullGenerationPipeline(t *testing.T) {
 		t.Fatalf("full output is invalid YAML: %v", err)
 	}
 	proxyGroupNames(t, generatedConfig["proxy-groups"])
-	if !strings.Contains(result, "MATCH,Final") {
+	rules := configRuleStrings(t, generatedConfig["rules"])
+	if !containsString(rules, "MATCH,🐟 漏网之鱼") {
 		t.Fatalf("full output is missing normalized rules")
 	}
-	if !realRulesets && (!strings.Contains(result, "DOMAIN-SUFFIX,example.org,Ads") ||
-		!strings.Contains(result, "IP-CIDR,192.0.2.0/24,Private")) {
+	if !realRulesets && (!containsString(rules, "DOMAIN-SUFFIX,example.org,🛑 广告拦截") ||
+		!containsString(rules, "IP-CIDR,192.0.2.0/24,🏠 私有网络")) {
 		t.Fatalf("full output is missing normalized fixture rules")
 	}
-	if realRulesets && (!strings.Contains(result, ",Ads") || !strings.Contains(result, ",Private")) {
+	if realRulesets && (!containsRuleTarget(rules, "🛑 广告拦截") || !containsRuleTarget(rules, "🏠 私有网络")) {
 		t.Fatalf("full output is missing real MetaCubeX rules")
 	}
 	if mihomoPath := os.Getenv("MIHOMO_TEST_BINARY"); mihomoPath != "" {
@@ -229,4 +255,35 @@ func proxyGroupNames(t *testing.T, value any) map[string]bool {
 		result[name] = true
 	}
 	return result
+}
+
+func configRuleStrings(t *testing.T, value any) []string {
+	t.Helper()
+	data, err := yaml.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rules []string
+	if err = yaml.Unmarshal(data, &rules); err != nil {
+		t.Fatalf("invalid rules: %v", err)
+	}
+	return rules
+}
+
+func containsString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func containsRuleTarget(rules []string, target string) bool {
+	for _, rule := range rules {
+		if strings.HasSuffix(rule, ","+target) {
+			return true
+		}
+	}
+	return false
 }

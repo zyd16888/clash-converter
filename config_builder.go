@@ -11,7 +11,7 @@ import (
 
 // SubInfoGroupName 常量定义
 const (
-	SubInfoGroupName = "Sub Info" // 用量信息节点组名称
+	SubInfoGroupName = "📊 订阅信息" // 用量信息节点组名称
 )
 
 // DummyNodeConfig 假节点配置：用于显示订阅用量信息
@@ -147,7 +147,7 @@ func Marshal(y map[string]any) (result string, err error) {
 }
 
 // addSubInfoGroup 在配置中添加用量信息节点和节点组
-// 为每个订阅创建假节点显示用量，并将这些节点组成 "Sub Info" 组插入到最前面
+// 为每个订阅创建假节点显示用量，并将这些节点组成订阅信息组插入到最前面
 func addSubInfoGroup(yamlStr string, subInfos []*SubscriptionMeta) (string, error) {
 	var config map[string]any
 	err := yaml.Unmarshal([]byte(yamlStr), &config)
