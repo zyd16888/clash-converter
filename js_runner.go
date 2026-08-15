@@ -9,73 +9,72 @@ import (
 )
 
 type Ruleset struct {
-	tag     string
-	url     string
-	content string
+	tag      string
+	url      string
+	behavior string
+	content  string
 }
 
 // downloadRulesets 并发下载规则集，保持调用顺序
 // 从 JS 的 rulesets() 函数中提取规则集 URL，并发下载但按原始顺序返回
 func downloadRulesets(vm *goja.Runtime) (resultLines []*Ruleset, err error) {
-	rulesetsFunc := func(func(string, string)) {}
 	jsRulesetsFunc := vm.Get("rulesets")
 
-	if jsRulesetsFunc == nil {
+	if jsRulesetsFunc == nil || goja.IsUndefined(jsRulesetsFunc) || goja.IsNull(jsRulesetsFunc) {
 		return
 	}
 
-	err = vm.ExportTo(jsRulesetsFunc, &rulesetsFunc)
+	rulesetsFunc, ok := goja.AssertFunction(jsRulesetsFunc)
+	if !ok {
+		return nil, fmt.Errorf("rulesets must be a function")
+	}
 
+	registrations := make([]*Ruleset, 0, 64)
+	register := vm.ToValue(func(call goja.FunctionCall) goja.Value {
+		behavior := "classical"
+		if len(call.Arguments) >= 3 && !goja.IsUndefined(call.Argument(2)) {
+			behavior = call.Argument(2).String()
+		}
+		registrations = append(registrations, &Ruleset{
+			tag:      call.Argument(0).String(),
+			url:      call.Argument(1).String(),
+			behavior: behavior,
+		})
+		return goja.Undefined()
+	})
+
+	_, err = rulesetsFunc(goja.Undefined(), register)
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	errGroup := new(errgroup.Group)
 	limiter := make(chan bool, 8)
-	urlList := make([]string, 0, 8)
-	resultCh := make(chan *Ruleset, 8)
+	resultLines = make([]*Ruleset, len(registrations))
 
-	rulesetsFunc(func(tag string, url string) {
-		urlList = append(urlList, url)
+	for i, registration := range registrations {
+		i := i
+		registration := registration
 		errGroup.Go(func() error {
 			limiter <- true
 			defer func() {
 				<-limiter
 			}()
 
-			content, e := GetOrPut(url, FetchString)
+			content, e := GetOrPut(registration.url, FetchString)
 			if e != nil {
 				return e
 			}
 
-			resultCh <- &Ruleset{
-				tag:     tag,
-				url:     url,
-				content: content,
-			}
+			registration.content = content
+			resultLines[i] = registration
 			return nil
 		})
-	})
-
-	resultMap := make(map[string]*Ruleset)
-	collected := make(chan bool, 1)
-	go func() {
-		for line := range resultCh {
-			resultMap[line.url] = line
-		}
-		collected <- true
-	}()
-
-	err = errGroup.Wait()
-	close(resultCh)
-	if err != nil {
-		return nil, err
 	}
 
-	<-collected
-	resultLines = make([]*Ruleset, len(urlList))
-	for i, url := range urlList {
-		resultLines[i] = resultMap[url]
+	err = errGroup.Wait()
+	if err != nil {
+		return nil, err
 	}
 
 	return

@@ -33,4 +33,4 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/etnatker/clash-converter:latest
+          tags: ghcr.io/${{ github.repository }}:latest

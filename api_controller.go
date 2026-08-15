@@ -4,13 +4,22 @@ import (
 	_ "embed"
 	"fmt"
 	"net/http"
+	"net/url"
+	"path"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
 
 //go:embed ui.html
 var uiHTML string
+
+//go:embed example/script.js
+var exampleScript string
+
+//go:embed example/template.yaml
+var exampleTemplate string
 
 // setupRouter 配置路由
 func setupRouter() (r *gin.Engine) {
@@ -23,6 +32,8 @@ func setupRouter() (r *gin.Engine) {
 	r.GET("/ping", handlePing)
 	r.GET("/sub", handleSubscription)
 	r.GET("/ui", handleUI)
+	r.GET("/example/script.js", handleExampleScript)
+	r.GET("/example/template.yaml", handleExampleTemplate)
 
 	return
 }
@@ -36,12 +47,22 @@ func handleUI(c *gin.Context) {
 	c.String(http.StatusOK, uiHTML)
 }
 
+func handleExampleScript(c *gin.Context) {
+	c.Data(http.StatusOK, "application/javascript; charset=utf-8", []byte(exampleScript))
+}
+
+func handleExampleTemplate(c *gin.Context) {
+	c.Data(http.StatusOK, "application/yaml; charset=utf-8", []byte(exampleTemplate))
+}
+
 // handleSubscription 处理订阅转换请求
 // 支持多个订阅合并、流量统计、用量信息显示
 func handleSubscription(c *gin.Context) {
 	subs := c.QueryArray("sub")
+	subNames := c.QueryArray("subName")
 	scriptUrl := c.Query("script")
 	templateUrl := c.Query("template")
+	outputFilename := c.Query("filename")
 	userToken := c.Query("token")
 	legacyRelayRaw := c.Query("legacyRelay")
 	if legacyRelayRaw == "" {
@@ -80,6 +101,9 @@ func handleSubscription(c *gin.Context) {
 			L().Error(err.Error())
 			c.String(http.StatusInternalServerError, fmt.Sprintf("%s:\n%s", sub, err.Error()))
 			return
+		}
+		if i < len(subNames) {
+			setSubscriptionName(&proxies, subNames[i])
 		}
 		allProxies = append(allProxies, proxies)
 	}
@@ -122,5 +146,22 @@ func handleSubscription(c *gin.Context) {
 	for h, v := range mergedProxies.TransparentHeaders {
 		c.Header(h, v)
 	}
+	if filename := normalizeOutputFilename(outputFilename); filename != "" {
+		c.Header("Content-Disposition", fmt.Sprintf(
+			"attachment; filename*=UTF-8''%s", url.PathEscape(filename),
+		))
+	}
 	c.String(http.StatusOK, finalResult)
+}
+
+func normalizeOutputFilename(filename string) string {
+	filename = strings.TrimSpace(strings.ReplaceAll(filename, "\\", "/"))
+	filename = path.Base(filename)
+	if filename == "." || filename == "/" || filename == "" {
+		return ""
+	}
+	if strings.EqualFold(path.Ext(filename), ".yaml") || strings.EqualFold(path.Ext(filename), ".yml") {
+		filename = strings.TrimSuffix(filename, path.Ext(filename))
+	}
+	return filename + ".yaml"
 }

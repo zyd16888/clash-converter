@@ -115,6 +115,14 @@
             flex: 1;
         }
 
+        .sub-fields {
+            display: grid;
+            grid-template-columns: minmax(120px, 0.35fr) minmax(0, 1fr);
+            gap: 8px;
+            flex: 1;
+            min-width: 0;
+        }
+
         .sub-controls {
             display: flex;
             gap: 5px;
@@ -165,15 +173,16 @@
             }
 
             .sub-item {
-                flex-wrap: nowrap;
+                align-items: stretch;
+                flex-direction: column;
             }
 
-            .sub-item input {
-                min-width: 0;
+            .sub-fields {
+                grid-template-columns: 1fr;
             }
 
             .sub-controls {
-                flex-wrap: nowrap;
+                justify-content: flex-end;
             }
         }
     </style>
@@ -203,6 +212,12 @@
             <div class="form-group">
                 <label for="token">Access Token</label>
                 <input type="text" id="token" placeholder="your-access-token">
+            </div>
+
+            <div class="form-group">
+                <label for="filename">输出文件名</label>
+                <input type="text" id="filename" placeholder="我的整合订阅">
+                <div class="hint">可不填写；系统会自动补充 .yaml 后缀</div>
             </div>
 
             <div class="form-group">
@@ -249,6 +264,14 @@
             // 从 URL 参数加载配置（覆盖 localStorage）
             loadFromQuery();
 
+            // 默认使用当前服务内置的示例脚本和模板
+            if (!document.getElementById('script').value) {
+                document.getElementById('script').value = window.location.origin + '/example/script.js';
+            }
+            if (!document.getElementById('template').value) {
+                document.getElementById('template').value = window.location.origin + '/example/template.yaml';
+            }
+
             // 如果没有订阅，添加一个空的
             if (document.querySelectorAll('.sub-item').length === 0) {
                 addSub();
@@ -262,6 +285,7 @@
             document.getElementById('script').addEventListener('input', handleChange);
             document.getElementById('template').addEventListener('input', handleChange);
             document.getElementById('token').addEventListener('input', handleChange);
+            document.getElementById('filename').addEventListener('input', handleChange);
             document.getElementById('legacyRelay').addEventListener('change', handleChange);
         }
 
@@ -276,9 +300,16 @@
                 if (config.script) document.getElementById('script').value = config.script;
                 if (config.template) document.getElementById('template').value = config.template;
                 if (config.token) document.getElementById('token').value = config.token;
+                if (config.filename) document.getElementById('filename').value = config.filename;
                 if (config.legacyRelay) document.getElementById('legacyRelay').checked = true;
                 if (config.subs && config.subs.length > 0) {
-                    config.subs.forEach(sub => addSub(sub));
+                    config.subs.forEach(sub => {
+                        if (typeof sub === 'string') {
+                            addSub(sub, '');
+                        } else {
+                            addSub(sub.url || '', sub.name || '');
+                        }
+                    });
                 }
             } catch (e) {
                 console.error('Failed to load config from storage:', e);
@@ -301,6 +332,9 @@
             if (params.has('token')) {
                 document.getElementById('token').value = params.get('token');
             }
+            if (params.has('filename')) {
+                document.getElementById('filename').value = params.get('filename');
+            }
             if (params.has('legacyRelay')) {
                 document.getElementById('legacyRelay').checked = parseBooleanParam(params.get('legacyRelay'));
             } else if (params.has('legacy_relay')) {
@@ -308,28 +342,37 @@
             }
 
             const subParams = params.getAll('sub');
+            const subNameParams = params.getAll('subName');
             if (subParams.length > 0) {
                 // 清空现有订阅
                 document.getElementById('subList').innerHTML = '';
-                subParams.forEach(sub => addSub(sub));
+                subParams.forEach((sub, index) => addSub(sub, subNameParams[index] || ''));
             }
         }
 
         // 添加订阅
-        function addSub(value = '') {
+        function addSub(value = '', name = '') {
             const subList = document.getElementById('subList');
             const index = subList.children.length;
 
             const div = document.createElement('div');
             div.className = 'sub-item';
             div.innerHTML = `
-                <input type="url" placeholder="订阅链接" value="${value}" onchange="handleChange()">
+                <div class="sub-fields">
+                    <input class="sub-name" type="text" placeholder="自定义名称，例如：优质线路 A">
+                    <input class="sub-url" type="url" placeholder="订阅链接">
+                </div>
                 <div class="sub-controls">
                     <button class="btn btn-secondary btn-small" onclick="moveSub(${index}, -1)">↑</button>
                     <button class="btn btn-secondary btn-small" onclick="moveSub(${index}, 1)">↓</button>
                     <button class="btn btn-secondary btn-small" onclick="removeSub(${index})">删除</button>
                 </div>
             `;
+
+            div.querySelector('.sub-name').value = name;
+            div.querySelector('.sub-url').value = value;
+            div.querySelector('.sub-name').addEventListener('input', handleChange);
+            div.querySelector('.sub-url').addEventListener('input', handleChange);
 
             subList.appendChild(div);
             updateSubIndices();
@@ -384,13 +427,17 @@
             const script = document.getElementById('script').value.trim();
             const template = document.getElementById('template').value.trim();
             const token = document.getElementById('token').value.trim();
+            const filename = document.getElementById('filename').value.trim();
             const legacyRelay = document.getElementById('legacyRelay').checked;
 
-            const subs = Array.from(document.querySelectorAll('.sub-item input'))
-                .map(input => input.value.trim())
-                .filter(v => v);
+            const subs = Array.from(document.querySelectorAll('.sub-item'))
+                .map(item => ({
+                    name: item.querySelector('.sub-name').value.trim(),
+                    url: item.querySelector('.sub-url').value.trim()
+                }))
+                .filter(sub => sub.url);
 
-            return { baseUrl, script, template, token, legacyRelay, subs };
+            return { baseUrl, script, template, token, filename, legacyRelay, subs };
         }
 
         // 解析布尔参数，兼容 true/false/1/0
@@ -415,11 +462,13 @@
             // 手动构建订阅链接参数，使用 encodeURIComponent 避免加号问题
             const params = [];
             config.subs.forEach(sub => {
-                params.push('sub=' + encodeURIComponent(sub));
+                params.push('sub=' + encodeURIComponent(sub.url));
+                params.push('subName=' + encodeURIComponent(sub.name));
             });
             if (config.script) params.push('script=' + encodeURIComponent(config.script));
             if (config.template) params.push('template=' + encodeURIComponent(config.template));
             if (config.token) params.push('token=' + encodeURIComponent(config.token));
+            if (config.filename) params.push('filename=' + encodeURIComponent(config.filename));
             if (config.legacyRelay) params.push('legacyRelay=1');
 
             document.getElementById('resultUrl').textContent = `${baseUrl}/sub?${params.join('&')}`;
@@ -428,11 +477,13 @@
             const bookmarkParams = [];
             if (config.baseUrl) bookmarkParams.push('baseUrl=' + encodeURIComponent(config.baseUrl));
             config.subs.forEach(sub => {
-                bookmarkParams.push('sub=' + encodeURIComponent(sub));
+                bookmarkParams.push('sub=' + encodeURIComponent(sub.url));
+                bookmarkParams.push('subName=' + encodeURIComponent(sub.name));
             });
             if (config.script) bookmarkParams.push('script=' + encodeURIComponent(config.script));
             if (config.template) bookmarkParams.push('template=' + encodeURIComponent(config.template));
             if (config.token) bookmarkParams.push('token=' + encodeURIComponent(config.token));
+            if (config.filename) bookmarkParams.push('filename=' + encodeURIComponent(config.filename));
             if (config.legacyRelay) bookmarkParams.push('legacyRelay=1');
 
             document.getElementById('bookmarkUrl').textContent = `${window.location.origin}/ui?${bookmarkParams.join('&')}`;

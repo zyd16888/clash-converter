@@ -42,11 +42,15 @@ func FetchString(url string) (string, error) {
 	L().Info(fmt.Sprintf("Fetching %s", url))
 
 	client := resty.New().SetRetryCount(3)
+	defer func() { _ = client.Close() }()
 	res, err := client.R().Get(url)
 
 	if err != nil {
 		return "", err
 	}
+	if res.StatusCode() < 200 || res.StatusCode() >= 300 {
+		return "", fmt.Errorf("fetch %s returned HTTP %d", url, res.StatusCode())
+	}
 
-	return res.String(), client.Close()
+	return res.String(), nil
 }

@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -75,6 +77,14 @@ func BuildTemplate(
 				continue
 			}
 
+			if rule.behavior != "" && rule.behavior != "classical" {
+				r, err = normalizeRule(r, rule.behavior)
+				if err != nil {
+					err = fmt.Errorf("invalid %s rule from %s: %w", rule.behavior, rule.url, err)
+					return
+				}
+			}
+
 			ruleComponents := strings.Split(r, ",")
 			if len(ruleComponents) < 2 {
 				err = fmt.Errorf("rules must have at least 2 componets: %s", rule.content)
@@ -101,6 +111,27 @@ func BuildTemplate(
 	result["rules"] = rules
 
 	return
+}
+
+func normalizeRule(rule string, behavior string) (string, error) {
+	switch behavior {
+	case "domain":
+		if strings.HasPrefix(rule, "+.") {
+			return "DOMAIN-SUFFIX," + strings.TrimPrefix(rule, "+."), nil
+		}
+		return "DOMAIN," + rule, nil
+	case "ipcidr":
+		ip, _, err := net.ParseCIDR(rule)
+		if err != nil {
+			return "", fmt.Errorf("%q is not a CIDR", rule)
+		}
+		if ip.To4() == nil {
+			return "IP-CIDR6," + rule, nil
+		}
+		return "IP-CIDR," + rule, nil
+	default:
+		return "", fmt.Errorf("unsupported behavior %q", behavior)
+	}
 }
 
 // Marshal 将配置序列化为 YAML 字符串
@@ -134,7 +165,14 @@ func addSubInfoGroup(yamlStr string, subInfos []*SubscriptionMeta) (string, erro
 	for _, info := range subInfos {
 		used := float64(info.Upload+info.Download) / 1024 / 1024 / 1024
 		total := float64(info.Total) / 1024 / 1024 / 1024
-		nodeName := fmt.Sprintf("%s：%.1f/%.1f", info.Name, used, total)
+		remaining := max(total-used, 0)
+		nodeName := fmt.Sprintf("%s | 已用 %.1f GB / %.1f GB | 剩余 %.1f GB", info.Name, used, total, remaining)
+		if info.Total == 0 {
+			nodeName = info.Name + " | 流量信息不可用"
+		}
+		if info.Expire > 0 {
+			nodeName += " | 到期 " + time.Unix(info.Expire, 0).Format("2006-01-02")
+		}
 		infoNodeNames = append(infoNodeNames, nodeName)
 
 		// 创建假节点

@@ -167,6 +167,48 @@ func ExtractProxies(url string, name string) (nodes SubscriptionData, err error)
 	return
 }
 
+func setSubscriptionName(nodes *SubscriptionData, name string) {
+	name = strings.Join(strings.Fields(name), " ")
+	if name == "" {
+		return
+	}
+
+	for _, info := range nodes.SubInfos {
+		info.Name = name
+	}
+
+	usedNames := make(map[string]int, len(nodes.Proxies))
+	renames := make(map[string]string, len(nodes.Proxies))
+	for _, proxy := range nodes.Proxies {
+		oldName, ok := proxy["name"].(string)
+		if !ok || strings.TrimSpace(oldName) == "" {
+			continue
+		}
+
+		cleanName := strings.Join(strings.Fields(oldName), " ")
+		baseName := fmt.Sprintf("[%s] %s", name, cleanName)
+		usedNames[baseName]++
+		newName := baseName
+		if usedNames[baseName] > 1 {
+			newName = fmt.Sprintf("%s #%d", baseName, usedNames[baseName])
+		}
+		proxy["name"] = newName
+		if _, exists := renames[oldName]; !exists {
+			renames[oldName] = newName
+		}
+	}
+
+	for _, proxy := range nodes.Proxies {
+		dialerProxy, ok := proxy["dialer-proxy"].(string)
+		if !ok {
+			continue
+		}
+		if renamed, exists := renames[dialerProxy]; exists {
+			proxy["dialer-proxy"] = renamed
+		}
+	}
+}
+
 // mergeProxies 合并多个订阅的数据
 // 规则：节点顺序合并，流量统计累加，过期时间取最大值
 func mergeProxies(allProxies []SubscriptionData) SubscriptionData {

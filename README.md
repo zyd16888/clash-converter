@@ -110,9 +110,11 @@ export ACCESS_TOKEN=your-secret-token
 | 参数       | 类型       | 必填 | 说明                                                                   |
 |----------|----------|----|----------------------------------------------------------------------|
 | sub      | string[] | 是  | 订阅链接，可传入多个                                                           |
+| subName  | string[] | 否  | 与 `sub` 按顺序对应的自定义名称；填写后会作为节点名称前缀                         |
 | script   | string   | 是  | JS 脚本 URL                                                            |
 | template | string   | 是  | 模板 YAML URL                                                          |
 | token    | string   | 是  | 访问令牌                                                                 |
+| filename | string   | 否  | 返回配置的文件名，系统会自动补充 `.yaml` 后缀                                  |
 | legacyRelay | bool | 否 | 是否启用 legacy relay 兼容参数，支持 `true/false/1/0`，默认 `false`；此参数直接传递给 JS 脚本 |
 
 
@@ -135,7 +137,7 @@ Web 界面，用于可视化生成订阅链接。
 **URL 参数预填：**
 
 所有配置项都可以通过 URL 参数传入并预填写（用于保存至书签或分享）。
-例如：`baseUrl`、`sub`、`script`、`template`、`token`、`legacyRelay`。
+例如：`baseUrl`、`sub`、`subName`、`script`、`template`、`token`、`filename`、`legacyRelay`。
 
 ### GET /ping
 
@@ -148,14 +150,22 @@ Web 界面，用于可视化生成订阅链接。
 1. 访问 `http://localhost:8080/ui`
 2. 填写以下配置：
     - **Base URL**：订阅服务的基础地址（默认为当前页面域名）
-    - **订阅列表**：添加一个或多个订阅链接，支持排序
+    - **订阅列表**：添加一个或多个订阅链接和自定义名称，支持排序；自定义名称会成为节点前缀
     - **Script URL**：JS 脚本地址
     - **Template URL**：模板文件地址
     - **Access Token**：访问令牌
+    - **输出文件名**：可选，指定 Clash 客户端收到的 YAML 文件名
     - **Legacy Relay**：是否附带 `legacyRelay=1` 参数
 3. 页面会生成两个链接：
     - **订阅链接**：用于 Clash 客户端订阅
     - **收藏链接**：包含当前配置的页面链接，可保存到书签
+
+服务会内置并默认填写以下地址，无需额外托管示例文件：
+
+- `http://localhost:8080/example/script.js`
+- `http://localhost:8080/example/template.yaml`
+
+部署后将 `http://localhost:8080` 替换为实际服务地址即可，也可以改填 GitHub Raw 等可由服务端访问的 URL。
 
 ## 订阅用量信息
 
@@ -164,10 +174,11 @@ Web 界面，用于可视化生成订阅链接。
 **节点命名格式：**
 
 ```
-订阅名称：已用GB/总量GB
+订阅名称 | 已用 12.5 GB / 100.0 GB | 剩余 87.5 GB | 到期 2026-09-01
 ```
 
-例如：`订阅01：12.5/100.0`，其中`订阅01`为缺省名称。订阅若下发文件名，则会采用下发的文件名。
+自定义名称优先于订阅响应中的文件名；两者都没有时使用 `订阅01`、`订阅02` 等缺省名称。未返回
+`Subscription-Userinfo` 时会显示“流量信息不可用”。
 
 ## Template 模板文件
 
@@ -208,9 +219,10 @@ JS 脚本负责定义订阅转换的具体逻辑，包括规则集的下载和�
 
 用于定义需要下载的规则集。
 
-- **参数**：`callback(tag, url)` - 规则集回调函数
+- **参数**：`callback(tag, url, behavior)` - 规则集回调函数
     - `tag` (string): 规则标签，将作为规则的目标策略组
     - `url` (string): 规则集文件的 URL（支持缓存）
+    - `behavior` (string，可选): `classical`、`domain` 或 `ipcidr`，默认 `classical`
 - **返回值**：无
 
 **示例：**
@@ -227,6 +239,10 @@ function rulesets(callback) {
 
     // 定义特定应用规则
     callback('Netflix', 'https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Netflix.list');
+
+    // MetaCubeX 文本列表由服务端展开，最终配置不会包含 rule-providers
+    callback('OpenAI', 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/openai.list', 'domain');
+    callback('DIRECT', 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/cn.list', 'ipcidr');
 }
 ```
 
@@ -234,6 +250,8 @@ function rulesets(callback) {
 
 - 规则集文件中的规则会被解析并添加 `tag` 作为目标
 - 例如：`DOMAIN,google.com` → `DOMAIN,google.com,PROXY`
+- `domain` 会把普通域名和 `+.` 域名分别转换为 `DOMAIN`、`DOMAIN-SUFFIX`
+- `ipcidr` 会根据地址族转换为 `IP-CIDR` 或 `IP-CIDR6`
 - 支持的规则格式参考 Clash Meta 文档
 
 #### buildConfig(config, legacyRelay)
@@ -284,7 +302,7 @@ function buildConfig(config, legacyRelay) {
     });
 
     // 在规则列表最后添加自定义规则
-    config['rules'].push('MATCH,PROXY');
+    config['rules'] = config['rules'].concat(['MATCH,PROXY']);
 }
 ```
 

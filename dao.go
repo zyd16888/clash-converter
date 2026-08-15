@@ -64,7 +64,8 @@ func GetOrPut(url string, contentSupplier func(string) (string, error)) (result 
 		var content string
 		content, err = contentSupplier(url)
 		if err != nil {
-			return
+			L().Warn(fmt.Sprintf("Failed to refresh %s, using stale cache: %v", url, err))
+			return file.Content, nil
 		}
 
 		file.Content = content
