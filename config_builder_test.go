@@ -41,6 +41,49 @@ func TestBuildTemplateNormalizesRulesetBehaviors(t *testing.T) {
 	}
 }
 
+func TestExampleTemplateDNSPolicy(t *testing.T) {
+	template, err := os.ReadFile(filepath.Join("example", "template.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var config map[string]any
+	if err = yaml.Unmarshal(template, &config); err != nil {
+		t.Fatalf("invalid example template: %v", err)
+	}
+	dns, ok := config["dns"].(map[string]any)
+	if !ok {
+		t.Fatalf("dns has unexpected type %T", config["dns"])
+	}
+	policy, ok := dns["nameserver-policy"].(map[string]any)
+	if !ok {
+		t.Fatalf("nameserver-policy has unexpected type %T", dns["nameserver-policy"])
+	}
+
+	assertStringList(t, dns["nameserver"], []string{
+		"https://1.1.1.1/dns-query",
+		"https://8.8.8.8/dns-query",
+	})
+	assertStringList(t, policy["geosite:cn"], []string{
+		"https://dns.alidns.com/dns-query",
+		"https://doh.pub/dns-query",
+	})
+	assertStringList(t, policy["geosite:geolocation-!cn"], []string{
+		"https://1.1.1.1/dns-query",
+		"https://8.8.8.8/dns-query",
+	})
+	assertStringList(t, dns["proxy-server-nameserver"], []string{
+		"https://dns.alidns.com/dns-query",
+		"https://doh.pub/dns-query",
+	})
+	if _, exists := dns["direct-nameserver"]; exists {
+		t.Fatal("direct-nameserver bypasses the domestic/foreign DNS policy")
+	}
+	if respectRules, _ := dns["respect-rules"].(bool); !respectRules {
+		t.Fatal("DNS requests must respect routing rules")
+	}
+}
+
 func TestExampleConfigHasSelfContainedGroupsWithoutRelay(t *testing.T) {
 	scriptPath := filepath.Join("example", "script.js")
 	templatePath := filepath.Join("example", "template.yaml")
@@ -67,7 +110,11 @@ func TestExampleConfigHasSelfContainedGroupsWithoutRelay(t *testing.T) {
 		{"name": "[流量优选] SG 01", "type": "ss", "server": "127.0.0.1", "port": 10003},
 		{"name": "套餐剩余 100 GB", "type": "ss", "server": "127.0.0.1", "port": 10002},
 	}
-	config["rules"] = []string{"DOMAIN,example.com,PROXY"}
+	config["rules"] = []string{
+		"DOMAIN,example.com,PROXY",
+		"DOMAIN-SUFFIX,linux.do,PROXY",
+		"DOMAIN-SUFFIX,nodeseek.com,PROXY",
+	}
 
 	var buildConfig func(map[string]any, bool)
 	if err = vm.ExportTo(vm.Get("buildConfig"), &buildConfig); err != nil {
@@ -97,7 +144,7 @@ func TestExampleConfigHasSelfContainedGroupsWithoutRelay(t *testing.T) {
 		"🚀 节点选择", "⚡ 自动选择", "🛟 故障转移", "🛑 广告拦截",
 		"🤖 AI 服务", "📹 YouTube", "🔍 Google 服务", "Ⓜ️ Microsoft 服务",
 		"🍏 Apple 服务", "📲 Telegram", "💬 社交媒体", "🎬 国际流媒体",
-		"🎮 游戏平台", "🛠️ 开发工具", "☁️ 云服务", "💳 金融支付",
+		"🎮 游戏平台", "🛠️ 开发工具", "☁️ 国内云服务", "🌐 国外云服务", "💳 金融支付",
 		"🏠 私有网络", "🇨🇳 国内直连", "🐟 漏网之鱼",
 	}
 	if len(groups) != len(required) {
@@ -107,6 +154,21 @@ func TestExampleConfigHasSelfContainedGroupsWithoutRelay(t *testing.T) {
 		if !groups[name] {
 			t.Errorf("missing proxy group %q", name)
 		}
+	}
+	groupConfigs := proxyGroupConfigs(t, config["proxy-groups"])
+	domesticCloud, ok := groupConfigs["☁️ 国内云服务"]
+	if !ok || len(domesticCloud.Proxies) == 0 {
+		t.Fatal("domestic cloud group has no candidates")
+	}
+	if got := domesticCloud.Proxies[0]; got != "DIRECT" {
+		t.Errorf("domestic cloud default is %q, want DIRECT", got)
+	}
+	globalCloud, ok := groupConfigs["🌐 国外云服务"]
+	if !ok || len(globalCloud.Proxies) == 0 {
+		t.Fatal("global cloud group has no candidates")
+	}
+	if got := globalCloud.Proxies[0]; got != "🚀 节点选择" {
+		t.Errorf("global cloud default is %q, want main proxy group", got)
 	}
 
 	var definitions [][]string
@@ -132,6 +194,38 @@ func TestExampleConfigHasSelfContainedGroupsWithoutRelay(t *testing.T) {
 	} {
 		if targets[source] != "🤖 AI 服务" {
 			t.Errorf("AI ruleset %q targets %q", source, targets[source])
+		}
+	}
+	for _, source := range []string{"aliyun", "huaweicloud", "volcengine", "ucloud", "qiniu", "aws-cn", "azure@cn"} {
+		if targets[source] != "☁️ 国内云服务" {
+			t.Errorf("domestic cloud ruleset %q targets %q", source, targets[source])
+		}
+	}
+	for _, source := range []string{"aws", "azure", "cloudflare", "digitalocean", "vercel", "netlify"} {
+		if targets[source] != "🌐 国外云服务" {
+			t.Errorf("global cloud ruleset %q targets %q", source, targets[source])
+		}
+	}
+	for _, definition := range definitions {
+		if definition[1] == "geoip" && definition[2] == "cloudflare" {
+			t.Fatal("Cloudflare GEOIP classifies unrelated CDN customers as cloud services")
+		}
+	}
+	if indexes["aws-cn"] >= indexes["aws"] || indexes["azure@cn"] >= indexes["azure"] {
+		t.Error("China cloud rulesets must precede their global counterparts")
+	}
+
+	rules := configRuleStrings(t, config["rules"])
+	for _, rule := range []string{
+		"DOMAIN-SUFFIX,tencentcloud.com,☁️ 国内云服务",
+		"DOMAIN-SUFFIX,baidubce.com,☁️ 国内云服务",
+		"DOMAIN-SUFFIX,jdcloud.com,☁️ 国内云服务",
+		"DOMAIN-SUFFIX,ksyuncs.com,☁️ 国内云服务",
+		"DOMAIN-SUFFIX,linux.do,PROXY",
+		"DOMAIN-SUFFIX,nodeseek.com,PROXY",
+	} {
+		if !containsString(rules, rule) {
+			t.Errorf("generated rules are missing %q", rule)
 		}
 	}
 	if indexes["google-gemini"] >= indexes["google"] || indexes["google-deepmind"] >= indexes["google"] {
@@ -234,27 +328,59 @@ func TestExampleConfigFullGenerationPipeline(t *testing.T) {
 
 func proxyGroupNames(t *testing.T, value any) map[string]bool {
 	t.Helper()
+	groups := proxyGroupConfigs(t, value)
+	result := make(map[string]bool, len(groups))
+	for name := range groups {
+		result[name] = true
+	}
+	return result
+}
+
+type proxyGroupConfig struct {
+	Name    string   `yaml:"name"`
+	Type    string   `yaml:"type"`
+	Proxies []string `yaml:"proxies"`
+}
+
+func proxyGroupConfigs(t *testing.T, value any) map[string]proxyGroupConfig {
+	t.Helper()
 	data, err := yaml.Marshal(value)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var groups []map[string]any
+	var groups []proxyGroupConfig
 	if err = yaml.Unmarshal(data, &groups); err != nil {
 		t.Fatalf("invalid proxy groups: %v", err)
 	}
-	result := make(map[string]bool, len(groups))
+	result := make(map[string]proxyGroupConfig, len(groups))
 	for _, group := range groups {
-		name, _ := group["name"].(string)
-		groupType, _ := group["type"].(string)
-		if groupType == "relay" {
-			t.Errorf("group %q uses relay", name)
+		if group.Name == "" {
+			t.Error("proxy group has no name")
 		}
-		if result[name] {
-			t.Errorf("duplicate proxy group %q", name)
+		if group.Type == "relay" {
+			t.Errorf("group %q uses relay", group.Name)
 		}
-		result[name] = true
+		if _, exists := result[group.Name]; exists {
+			t.Errorf("duplicate proxy group %q", group.Name)
+		}
+		result[group.Name] = group
 	}
 	return result
+}
+
+func assertStringList(t *testing.T, value any, want []string) {
+	t.Helper()
+	data, err := yaml.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	if err = yaml.Unmarshal(data, &got); err != nil {
+		t.Fatalf("invalid string list: %v", err)
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("unexpected string list: got %v, want %v", got, want)
+	}
 }
 
 func configRuleStrings(t *testing.T, value any) []string {

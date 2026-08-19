@@ -17,7 +17,8 @@ var GROUP = {
     STREAMING: '🎬 国际流媒体',
     GAMING: '🎮 游戏平台',
     DEVELOPMENT: '🛠️ 开发工具',
-    CLOUD: '☁️ 云服务',
+    CLOUD_CN: '☁️ 国内云服务',
+    CLOUD_GLOBAL: '🌐 国外云服务',
     FINANCE: '💳 金融支付',
     PRIVATE: '🏠 私有网络',
     CN: '🇨🇳 国内直连',
@@ -30,6 +31,14 @@ var RULESET_DEFINITIONS = [
     [GROUP.ADS, 'geosite', 'category-ads-all'],
     [GROUP.PRIVATE, 'geosite', 'private'],
     [GROUP.PRIVATE, 'geoip', 'private'],
+
+    [GROUP.CLOUD_CN, 'geosite', 'aliyun'],
+    [GROUP.CLOUD_CN, 'geosite', 'huaweicloud'],
+    [GROUP.CLOUD_CN, 'geosite', 'volcengine'],
+    [GROUP.CLOUD_CN, 'geosite', 'ucloud'],
+    [GROUP.CLOUD_CN, 'geosite', 'qiniu'],
+    [GROUP.CLOUD_CN, 'geosite', 'aws-cn'],
+    [GROUP.CLOUD_CN, 'geosite', 'azure@cn'],
 
     [GROUP.AI, 'geosite', 'google-gemini'],
     [GROUP.AI, 'geosite', 'google-deepmind'],
@@ -90,13 +99,12 @@ var RULESET_DEFINITIONS = [
     [GROUP.DEVELOPMENT, 'geosite', 'jetbrains'],
     [GROUP.DEVELOPMENT, 'geosite', 'stackexchange'],
 
-    [GROUP.CLOUD, 'geosite', 'aws'],
-    [GROUP.CLOUD, 'geosite', 'azure'],
-    [GROUP.CLOUD, 'geosite', 'cloudflare'],
-    [GROUP.CLOUD, 'geoip', 'cloudflare'],
-    [GROUP.CLOUD, 'geosite', 'digitalocean'],
-    [GROUP.CLOUD, 'geosite', 'vercel'],
-    [GROUP.CLOUD, 'geosite', 'netlify'],
+    [GROUP.CLOUD_GLOBAL, 'geosite', 'aws'],
+    [GROUP.CLOUD_GLOBAL, 'geosite', 'azure'],
+    [GROUP.CLOUD_GLOBAL, 'geosite', 'cloudflare'],
+    [GROUP.CLOUD_GLOBAL, 'geosite', 'digitalocean'],
+    [GROUP.CLOUD_GLOBAL, 'geosite', 'vercel'],
+    [GROUP.CLOUD_GLOBAL, 'geosite', 'netlify'],
 
     [GROUP.FINANCE, 'geosite', 'paypal'],
     [GROUP.FINANCE, 'geosite', 'stripe'],
@@ -125,7 +133,32 @@ var RULESET_DEFINITIONS = [
 var POLICY_GROUPS = [
     GROUP.AI, GROUP.YOUTUBE, GROUP.GOOGLE, GROUP.MICROSOFT, GROUP.APPLE,
     GROUP.TELEGRAM, GROUP.SOCIAL, GROUP.STREAMING, GROUP.GAMING,
-    GROUP.DEVELOPMENT, GROUP.CLOUD, GROUP.FINANCE
+    GROUP.DEVELOPMENT, GROUP.CLOUD_CN, GROUP.CLOUD_GLOBAL, GROUP.FINANCE
+];
+
+// These providers have no dedicated cloud-only MetaCubeX source. Keep this
+// list limited to cloud product domains so their consumer services stay out.
+var DOMESTIC_CLOUD_DOMAIN_SUFFIXES = [
+    'cloud.tencent.com',
+    'tencentcloud.com',
+    'tencentcloudapi.com',
+    'myqcloud.com',
+    'qcloud.com',
+    'qcloudcdn.com',
+    'qcloudcos.com',
+    'qcloudimg.com',
+    'cloudbase.net',
+    'cloud.baidu.com',
+    'baidubce.com',
+    'bcebos.com',
+    'bdcloudapi.com',
+    'jdcloud.com',
+    'jdcloud-api.com',
+    'jdcloud-openapi.com',
+    'jcloud.com',
+    'jcloudcs.com',
+    'ksyun.com',
+    'ksyuncs.com'
 ];
 
 var INFO_NODE_PATTERN = /流量|到期|剩余|套餐|expire|traffic|quota|bandwidth/i;
@@ -173,6 +206,20 @@ function serviceCandidates(proxyNames) {
     return [GROUP.PROXY, 'DIRECT', GROUP.AUTO, GROUP.FALLBACK].concat(proxyNames);
 }
 
+function directCandidates(proxyNames) {
+    return ['DIRECT', GROUP.PROXY, GROUP.AUTO, GROUP.FALLBACK].concat(proxyNames);
+}
+
+function domesticCloudRules() {
+    var rules = [];
+    var i;
+
+    for (i = 0; i < DOMESTIC_CLOUD_DOMAIN_SUFFIXES.length; i += 1) {
+        rules.push('DOMAIN-SUFFIX,' + DOMESTIC_CLOUD_DOMAIN_SUFFIXES[i] + ',' + GROUP.CLOUD_CN);
+    }
+    return rules;
+}
+
 function buildGroups(proxyNames) {
     var groups = [
         selectGroup(GROUP.PROXY, [GROUP.AUTO, GROUP.FALLBACK, 'DIRECT'].concat(proxyNames)),
@@ -198,10 +245,14 @@ function buildGroups(proxyNames) {
         selectGroup(GROUP.CN, ['DIRECT', GROUP.PROXY, GROUP.AUTO, GROUP.FALLBACK].concat(proxyNames))
     ];
     var candidates = serviceCandidates(proxyNames);
+    var domesticCandidates = directCandidates(proxyNames);
     var i;
 
     for (i = 0; i < POLICY_GROUPS.length; i += 1) {
-        groups.push(selectGroup(POLICY_GROUPS[i], candidates));
+        groups.push(selectGroup(
+            POLICY_GROUPS[i],
+            POLICY_GROUPS[i] === GROUP.CLOUD_CN ? domesticCandidates : candidates
+        ));
     }
     groups.push(selectGroup(GROUP.FINAL, candidates));
     return groups;
@@ -230,5 +281,7 @@ function buildConfig(config, legacyRelay) {
 
     config['proxies'] = filteredProxies;
     config['proxy-groups'] = buildGroups(unique(proxyNames));
-    config['rules'] = (Array.isArray(config['rules']) ? config['rules'] : []).concat(['MATCH,' + GROUP.FINAL]);
+    config['rules'] = domesticCloudRules()
+        .concat(Array.isArray(config['rules']) ? config['rules'] : [])
+        .concat(['MATCH,' + GROUP.FINAL]);
 }
